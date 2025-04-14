@@ -230,10 +230,246 @@ class Game2048Env(gym.Env):
 
         # If the simulated board is different from the current board, the move is legal
         return not np.array_equal(self.board, temp_board)
+import copy
+import random
+import math
+import numpy as np
+import pickle
+import os
+from tqdm import tqdm
+from collections import defaultdict
+# from google.colab import files
 
+# -------------------------------
+# TODO: Define transformation functions (rotation and reflection), i.e., rot90, rot180, ..., etc.
+# -------------------------------
+def rot90(coords):
+    return [(y, 3 - x) for x, y in coords]
+def rot180(coords):
+    return [(3 - x, 3 - y) for x, y in coords]
+def rot270(coords):
+    return [(3 - y, x) for x, y in coords]
+def ref(coords):
+    return [(x, 3 - y) for x, y in coords]
+
+
+
+
+
+class NTupleApproximator:
+    def __init__(self, board_size, patterns, save_path="weights.pkl"):
+        """
+        Initializes the N-Tuple approximator.
+        Hint: you can adjust these if you want
+        """
+        self.board_size = board_size
+        self.patterns = patterns
+        # Create a weight dictionary for each pattern (shared within a pattern group)
+        self.weights = [defaultdict(float) for _ in patterns]
+        self.save_path = save_path
+        # Generate symmetrical transformations for each pattern
+        self.symmetry_patterns = [self.generate_symmetries(p) for p in self.patterns]
+        self.load_weights()
+
+    def save_weights(self):
+        with open(self.save_path, "wb") as f:
+            pickle.dump(self.weights, f)
+        # print(f"save weights successfully to {self.save_path}")
+
+    def load_weights(self):
+        if os.path.exists(self.save_path):
+            with open(self.save_path, "rb") as f:
+                loaded_weights = pickle.load(f)
+                for i in range(len(self.weights)):
+                    self.weights[i].update(loaded_weights[i])
+            print(f"load weights successfully from {self.save_path}")
+        else:
+            print("weights file not found, truncated")
+
+    def generate_symmetries(self, pattern):
+        # TODO: Generate 8 symmetrical transformations of the given pattern.
+        symmetries = []
+        symmetries.append(pattern)
+        symmetries.append(rot90(pattern))
+        symmetries.append(rot180(pattern))
+        symmetries.append(rot270(pattern))
+        symmetries.append(ref(pattern))
+        symmetries.append(rot90(ref(pattern)))
+        symmetries.append(rot180(ref(pattern)))
+        symmetries.append(rot270(ref(pattern)))
+        return symmetries
+
+
+    def tile_to_index(self, tile):
+        """
+        Converts tile values to an index for the lookup table.
+        """
+        if tile == 0:
+            return 0
+        else:
+            return int(math.log(tile, 2))
+
+    def get_feature(self, board, coords):
+        # TODO: Extract tile values from the board based on the given coordinates and convert them into a feature tuple.
+        return tuple(self.tile_to_index(board[x][y]) for x, y in coords)
+
+    def value(self, board):
+        total_value = 0
+        n = 0
+        game_over = 1
+        if np.any(board == 0):
+            game_over = 0
+        for i in range(4):
+            for j in range(4 - 1):
+                if board[i, j] == board[i, j+1]:
+                    game_over = 0
+        for j in range(4):
+            for i in range(4 - 1):
+                if board[i, j] == board[i+1, j]:
+                    game_over = 0
+
+        if game_over:
+            return 0
+        for i, syms in enumerate(self.symmetry_patterns):
+            for sym in syms:
+                feature = self.get_feature(board, sym)
+                total_value += self.weights[i][feature]
+                n += 1
+        return total_value / n
+
+    def update(self, board, delta, alpha):
+        for i, syms in enumerate(self.symmetry_patterns):
+            for sym in syms:
+                feature = self.get_feature(board, sym)
+                self.weights[i][feature] += alpha * delta
+
+def td_learning(env, approximator, num_episodes=50000, alpha=0.01, gamma=0.99, epsilon=0.1):
+    """
+    Trains the 2048 agent using TD-Learning.
+
+    Args:
+        env: The 2048 game environment.
+        approximator: NTupleApproximator instance.
+        num_episodes: Number of training episodes.
+        alpha: Learning rate.
+        gamma: Discount factor.
+        epsilon: Epsilon-greedy exploration rate.
+    """
+    final_scores = []
+    success_flags = []
+    max_tiles = []
+
+    for episode in tqdm(range(num_episodes)):
+        state = env.reset()
+        trajectory = []  # Store trajectory data if needed
+        previous_score = 0
+        done = False
+        max_tile = np.max(state)
+
+        while not done:
+            legal_moves = [a for a in range(4) if env.is_move_legal(a)]
+            if not legal_moves:
+                break
+            # TODO: action selection
+            # Note: TD learning works fine on 2048 without explicit exploration, but you can still try some exploration methods.
+            if random.random() < epsilon:
+                action = random.choice(legal_moves)
+            else:
+                max_value = -float('inf')
+                max_action = None
+                for a in legal_moves:
+                    env_sim = copy.deepcopy(env)
+                    sta, val, _, _ = env_sim.step(a)
+                    if approximator.value(sta) + (val - previous_score) > max_value:
+                        max_value = approximator.value(sta) + (val - previous_score)
+                        max_action = a
+                if max_action is None:
+                    next_state = env_sim.board
+                action = max_action
+            next_state, new_score, done, _ = env.step(action)
+            incremental_reward = new_score - previous_score
+            previous_score = new_score
+            max_tile = max(max_tile, np.max(next_state))
+
+            # TODO: Store trajectory or just update depending on the implementation
+            trajectory.append((state.copy(), action, incremental_reward, next_state.copy(), done))
+
+            state = next_state.copy()
+            # state = state.copy()
+        # TODO: If you are storing the trajectory, consider updating it now depending on your implementation.
+        trajectory.reverse()
+
+        for state, action, incremental_reward, next_state, done in trajectory:
+
+            delta = incremental_reward + gamma * approximator.value(next_state) - approximator.value(state)
+            #print(f'before: {approximator.value(state)}')
+            approximator.update(state, delta, alpha)
+            #print(f'incremental_reward: {incremental_reward}')
+            #print(f'after: {approximator.value(state)}')
+
+        final_scores.append(env.score)
+        success_flags.append(1 if max_tile >= 2048 else 0)
+        max_tiles.append(max_tile)
+        # epsilon *= 0.999
+
+        if (episode + 1) % 100 == 0:
+            avg_score = np.mean(final_scores[-100:])
+            success_rate = np.sum(success_flags[-100:]) / 100
+            print(f"Episode {episode+1}/{num_episodes} | Avg Score: {avg_score:.2f} | Success Rate: {success_rate:.2f} | Maxtile: {max(max_tiles[-100:])}")
+            approximator.save_weights()
+
+        if (episode + 1) % 2500 == 0:
+            plt.plot(final_scores)
+            plt.xlabel('Episode')
+            plt.ylabel('Score')
+            plt.title('Score Table')
+            plt.show()
+        # if (episode + 1) % 5000 == 0:
+        #   files.download(approximator.save_path)
+        # plot a Score table
+
+    return final_scores
+
+
+# TODO: Define your own n-tuple patterns
+'''patterns = [([1, 0], [1, 1], [2, 0], [2, 1], [3, 0], [3, 1]),
+            ([1, 2], [1, 1], [2, 2], [2, 1], [3, 2], [3, 1]),
+            ([1, 0], [0, 0], [2, 0], [3, 0]),
+            ([1, 1], [0, 1], [2, 1], [3, 1])]
+'''
+'''patterns = [([0, 0], [1, 0], [2, 0], [3, 0]),
+            ([0, 1], [1, 1], [2, 1], [3, 1]),
+            ([0, 0], [0, 1], [1, 0], [1, 1]),
+            ([0, 1], [0, 2], [1, 1], [1, 2]),
+            ([1, 1], [1, 2], [2, 1], [2, 2])]
+'''
+patterns = [([0, 1], [0, 2], [1, 1], [1, 2], [2, 1], [2, 2]),
+            ([0, 0], [0, 1], [1, 0], [1, 1], [2, 0], [2, 1]),
+            ([0, 0], [0, 1], [0, 2], [0, 3], [1, 0], [1, 1]),
+            ([1, 0], [1, 1], [1, 2], [1, 3], [2, 0], [2, 1])]
+approximator = NTupleApproximator(board_size=4, patterns=patterns)
+
+env = Game2048Env()
+def create_env_from_state(self, state, score):
+    """
+    Creates a deep copy of the environment with a given board state and score.
+    """
+    new_env = copy.deepcopy(self.env)
+    new_env.board = state.copy()
+    new_env.score = score
+    return new_env
 def get_action(state, score):
-    env = Game2048Env()
-    return random.choice([0, 1, 2, 3]) # Choose a random action
+    env = create_env_from_state(state, score)
+    legal_moves = [a for a in range(4) if env.is_move_legal(a)]
+    max_value = -float('inf')
+    best_action = None
+    for a in legal_moves:
+        env_sim = copy.deepcopy(env)
+        sta, val, _, _ = env_sim.step(a)
+        if approximator.value(sta) + val > max_value:
+            max_value = approximator.value(sta) + val
+            best_action = a
+    return best_action
     
     # You can submit this random agent to evaluate the performance of a purely random strategy.
 
