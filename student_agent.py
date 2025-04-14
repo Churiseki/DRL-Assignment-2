@@ -278,10 +278,15 @@ class NTupleApproximator:
 
     def load_weights(self):
         if os.path.exists(self.save_path):
-            with open(self.save_path, "rb") as f:
-                loaded_weights = pickle.load(f)
-                for i in range(len(self.weights)):
-                    self.weights[i].update(loaded_weights[i])
+            if self.save_path.endswith(".zip"):
+                with zipfile.ZipFile(self.save_path, "r") as zipf:
+                    with zipf.open("weights.pkl") as pkl_file:
+                        loaded_weights = pickle.load(pkl_file)
+            else:
+                with open(self.save_path, "rb") as f:
+                    loaded_weights = pickle.load(f)
+            for i in range(len(self.weights)):
+                self.weights[i].update(loaded_weights[i])
             print(f"load weights successfully from {self.save_path}")
         else:
             print("weights file not found, truncated")
@@ -450,6 +455,13 @@ patterns = [([0, 1], [0, 2], [1, 1], [1, 2], [2, 1], [2, 2]),
 approximator = NTupleApproximator(board_size=4, patterns=patterns)
 
 env = Game2048Env()
+import zipfile
+
+def load_weights_from_zip(zip_path, pkl_name="weights.pkl"):
+    with zipfile.ZipFile(zip_path, 'r') as zipf:
+        with zipf.open(pkl_name) as pkl_file:
+            return pickle.load(pkl_file)
+
 def create_env_from_state(state, score):
     """
     Creates a deep copy of the environment with a given board state and score.
