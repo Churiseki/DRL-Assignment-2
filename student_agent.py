@@ -450,11 +450,11 @@ patterns = [([0, 1], [0, 2], [1, 1], [1, 2], [2, 1], [2, 2]),
 approximator = NTupleApproximator(board_size=4, patterns=patterns)
 
 env = Game2048Env()
-def create_env_from_state(self, state, score):
+def create_env_from_state(state, score):
     """
     Creates a deep copy of the environment with a given board state and score.
     """
-    new_env = copy.deepcopy(self.env)
+    new_env = copy.deepcopy(env)
     new_env.board = state.copy()
     new_env.score = score
     return new_env
