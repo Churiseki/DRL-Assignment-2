@@ -257,7 +257,7 @@ def ref(coords):
 
 
 class NTupleApproximator:
-    def __init__(self, board_size, patterns, save_path="weights.pkl"):
+    def __init__(self, board_size, patterns, save_path="weights.pkl.zip"):
         """
         Initializes the N-Tuple approximator.
         Hint: you can adjust these if you want
